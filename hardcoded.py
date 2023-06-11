@@ -1,49 +1,38 @@
-import pandas as pd
+"""
+
+This file runs the game controlled by a hardcoded computer agent.
+
+"""
+
 import pygame
-import random
-import numpy as np
 import math
-import matplotlib.pyplot as plt
-import netfuncs
-import time
+import numpy as np
+import game_configs as config
+import game_funcs as funcs
 
 
-# Settings.
-dis_width = 100
-dis_height = 100
-white = (255, 255, 255)  # RGB colour system.
-black = (0, 0, 0)
-blue = (0, 0, 255)
-red = (255, 0, 0)
+def sim_score(collision, current_fruit_dis, new_fruit_dis):
+    # this calculates the score of a move based on the input information.
+    score = 1000 - (new_fruit_dis - current_fruit_dis) - (collision * 1000)
+    return score
 
 
-# Setting Up Game.
-pygame.init()
-dis = pygame.display.set_mode((dis_width, dis_height))
-pygame.display.set_caption('Snake Game')
+def sim_collision(x, y, snake_x_step_test, snake_y_step_test):
+    # this detects any kind of gameover via collision, based on the test direction.
+    snake_x_test, snake_y_test = funcs.snake_step(x, y, snake_x_step_test, snake_y_step_test)  # moving the snake pieces in sequence according to the test direction.
 
-clock = pygame.time.Clock()
-
-font_style = pygame.font.SysFont(None, 30)
-score_font = pygame.font.SysFont('verdana', 20)
-
-
-def sim_score(collision, old_fruit_dis, new_fruit_dis):
-    value = 1000 - (new_fruit_dis - old_fruit_dis) - (collision * 1000)
-    return value
-
-
-def sim_collision(x1, y1, x_test, y_test):
-    check = 0
-    if x_test > dis_width or x_test < 0 or y_test > dis_height or y_test < 0:  # detecting hitting the edge.
-        check = 1
-    for i in range(1, len(x1)):  # detecting hitting itself.
-        if x_test == x1[i] and y_test == y1[i]:
-            check = 1
-    return check
+    if snake_x_test[0] >= config.dis_width or snake_x_test[0] < 0 or snake_y_test[0] >= config.dis_height or snake_y_test[0] < 0:  # detecting hitting the edge of the board.
+        return True  # returns if snake leaves board.
+    
+    check_self_collide = funcs.snake_self_collision(snake_x_test, snake_y_test)  # detecting the snake hitting itself.
+    if check_self_collide == True:  # snake self collision has been detected.
+        return True  # returns if snake collides with itself.
+    
+    return False  # returns if snake survives.
 
 
 def list_loop(idx):
+    # this checks if the reference has spilled out of the dimensions, and loops it to the other end of the list.
     if idx == -1:
         return 3
     elif idx == 4:
@@ -52,132 +41,101 @@ def list_loop(idx):
         return idx
 
 
-# Running Generation.
-def run_generation():
-    snake_block_size = 10
-    game_over = False
-    start_pos = 50
-    x1 = [start_pos, start_pos - 10, start_pos - 20, start_pos - 30]
-    y1 = [start_pos, start_pos, start_pos, start_pos]
-    orientation_idx = 0  # 0 = right, 1 = down, 2 = left, 3 = up.
-    ori_x_lookup = [snake_block_size, 0, -snake_block_size, 0]
-    ori_y_lookup = [0, snake_block_size, 0, -snake_block_size]
-    fruit_score = 3
-    foodx = round(random.randrange(0, dis_width - snake_block_size) / snake_block_size) * snake_block_size
-    foody = round(random.randrange(0, dis_height - snake_block_size) / snake_block_size) * snake_block_size
-    bias_s = 0
-    bias_l = 0
-    bias_r = 0
+def calc_new_food_dis(snake_x, snake_y, snake_x_step_test, snake_y_step_test, food_x, food_y):
+    # calculates new distance to food based on current snake arrays and the test snake steps.
+    return math.sqrt((snake_x[0] + snake_x_step_test - food_x) ** 2 + (snake_y[0] + snake_y_step_test - food_y) ** 2)
 
-    timeout = 0
-    while not game_over:
-        if timeout == 200:
+
+def run_agent():
+    # this is the running loop for a game controlled by the hardcoded agent.
+    game_over = False  # indicates whether the game has finished.
+    running = True  # indicates whether the window needs to close.
+
+    snake_x, snake_y, snake_x_step, snake_y_step, score, food_x, food_y = funcs.game_init()  # initialise variables.
+
+    orientation_idx = 0  # 0 = right, 1 = down, 2 = left, 3 = up.
+    ori_x_lookup = [config.snake_block_size, 0, -config.snake_block_size, 0]  # lookup in x-direction based on 'orientation_idx'.
+    ori_y_lookup = [0, config.snake_block_size, 0, -config.snake_block_size]  # lookup in y-direction based on 'orientation_idx'.
+    decision_lookup = [0, -1, 1]  # straight, left, right.
+
+    timeout = 0  # initialising timeout counter.
+    while running:
+
+        if timeout == 200:  # 200 moves have been made.
             game_over = True
-        old_food_dis = math.sqrt((x1[0] - foodx) ** 2 + (y1[0] - foody) ** 2)
+        
+        if game_over == True:  # game is over, either by collision or by timeout.
+            return score  # returns the score.
+        
+        current_food_dis = math.sqrt((snake_x[0] - food_x) ** 2 + (snake_y[0] - food_y) ** 2)  # calculates the current distance to the food.
+        
 
         # SIMULATIONS
         # STRAIGHT
-        test_orientation_idx = orientation_idx
-        test_orientation_idx = list_loop(test_orientation_idx)
-        x_test = x1[0] + ori_x_lookup[test_orientation_idx]
-        y_test = y1[0] + ori_y_lookup[test_orientation_idx]
-        new_food_dis = math.sqrt((x_test - foodx) ** 2 + (y_test - foody) ** 2)
-        collision_check = sim_collision(x1, y1, x_test, y_test)
-        value_S = sim_score(collision_check, old_food_dis, new_food_dis) + bias_s
-        decision = "S"
+        test_orientation_idx = orientation_idx  # keeps the orientation the same.
+        snake_x_step_test = ori_x_lookup[test_orientation_idx]  # extracts snake step values in each direction.
+        snake_y_step_test = ori_y_lookup[test_orientation_idx]
+        new_food_dis = calc_new_food_dis(snake_x, snake_y, snake_x_step_test, snake_y_step_test, food_x, food_y)  # calculates what would be the new distance to the food.
+        collision_check = sim_collision(snake_x, snake_y, snake_x_step_test, snake_y_step_test)  # checks for any collisions.
+        score_straight = sim_score(collision_check, current_food_dis, new_food_dis)  # scores based on input information.
+        
+        # TURN LEFT
+        test_orientation_idx = list_loop(orientation_idx - 1)  # turns orientation to the left.
+        snake_x_step_test = ori_x_lookup[test_orientation_idx]  # extracts snake step values in each direction.
+        snake_y_step_test = ori_y_lookup[test_orientation_idx]
+        new_food_dis = calc_new_food_dis(snake_x, snake_y, snake_x_step_test, snake_y_step_test, food_x, food_y)  # calculates what would be the new distance to the food.
+        collision_check = sim_collision(snake_x, snake_y, snake_x_step_test, snake_y_step_test)  # checks for any collisions.
+        score_left = sim_score(collision_check, current_food_dis, new_food_dis)  # scores based on input information.
+        
+        # TURN RIGHT
+        test_orientation_idx = list_loop(orientation_idx + 1)  # turns orientation to the left.
+        snake_x_step_test = ori_x_lookup[test_orientation_idx]  # extracts snake step values in each direction.
+        snake_y_step_test = ori_y_lookup[test_orientation_idx]
+        new_food_dis = calc_new_food_dis(snake_x, snake_y, snake_x_step_test, snake_y_step_test, food_x, food_y)  # calculates what would be the new distance to the food.
+        collision_check = sim_collision(snake_x, snake_y, snake_x_step_test, snake_y_step_test)  # checks for any collisions.
+        score_right = sim_score(collision_check, current_food_dis, new_food_dis)  # scores based on input information.
 
-        # LEFT
-        test_orientation_idx = orientation_idx - 1
-        test_orientation_idx = list_loop(test_orientation_idx)
-        x_test = x1[0] + ori_x_lookup[test_orientation_idx]
-        y_test = y1[0] + ori_y_lookup[test_orientation_idx]
-        new_food_dis = math.sqrt((x_test - foodx) ** 2 + (y_test - foody) ** 2)
-        collision_check = sim_collision(x1, y1, x_test, y_test)
-        value_L = sim_score(collision_check, old_food_dis, new_food_dis) + bias_l
-        if value_L > value_S:
-            decision = "L"
 
-        # RIGHT
-        test_orientation_idx = orientation_idx + 1
-        test_orientation_idx = list_loop(test_orientation_idx)
-        x_test = x1[0] + ori_x_lookup[test_orientation_idx]
-        y_test = y1[0] + ori_y_lookup[test_orientation_idx]
-        new_food_dis = math.sqrt((x_test - foodx) ** 2 + (y_test - foody) ** 2)
-        collision_check = sim_collision(x1, y1, x_test, y_test)
-        value_R = sim_score(collision_check, old_food_dis, new_food_dis) + bias_r
-        if value_R > value_L and value_R > value_S:
-            decision = "R"
+        # MAKING DECISION
+        decision_idx = np.argmax(np.array([score_straight, score_left, score_right]))  # finds highest scoring direction.
+        decision = decision_lookup[decision_idx]  # extracts the decision.
+        orientation_idx = list_loop(orientation_idx + decision)  # modifies the orientation.
 
-        if decision == "S":  # keep going straight.
-            pass
-        elif decision == "L":  # turn left.
-            orientation_idx -= 1
-        elif decision == "R":  # turn right.
-            orientation_idx += 1
-        orientation_idx = list_loop(orientation_idx)
+        snake_x_step = ori_x_lookup[orientation_idx]  # finds step values in each direction based on decision.
+        snake_y_step = ori_y_lookup[orientation_idx]
 
-        x1_change = ori_x_lookup[orientation_idx]
-        y1_change = ori_y_lookup[orientation_idx]
 
-        # PROCESSING DECISION IN GAME
-        if len(x1) > 1:  # moving the snake pieces in sequence.
-            for i in range(len(x1) - 1, 0, -1):
-                x1[i] = x1[i - 1]
-                y1[i] = y1[i - 1]
-        x1[0] += x1_change
-        y1[0] += y1_change
-
-        if x1[0] > dis_width or x1[0] < 0 or y1[0] > dis_height or y1[0] < 0:  # detecting hitting the edge.
+        # PROCESSING GAME STATE
+        if snake_x[0] >= config.dis_width or snake_x[0] < 0 or snake_y[0] >= config.dis_height or snake_y[0] < 0:  # detecting hitting the edge of the board.
             game_over = True
-        for i in range(1, len(x1)):  # detecting hitting itself.
-            if x1[0] == x1[i] and y1[0] == y1[i]:
-                game_over = True
+            continue  # jumps to start of while loop. Avoids extra animation after collision.
+        
+        check_self_collide = funcs.snake_self_collision(snake_x, snake_y)  # detecting the snake hitting itself.
+        if check_self_collide == True:  # snake self collision has been detected.
+            game_over = True
+            continue  # jumps to start of while loop. Avoids extra animation after collision.
 
-        if x1[0] == foodx and y1[0] == foody:  # detecting hitting the food.
-            fruit_score += 1
-            x1.append(x1[-1])
-            y1.append(y1[-1])
-            check_fruit_spawn = True
-            while check_fruit_spawn:
-                foodx = round(random.randrange(0, dis_width - snake_block_size) / snake_block_size) * snake_block_size
-                foody = round(random.randrange(0, dis_height - snake_block_size) / snake_block_size) * snake_block_size
-                spawn_new_fruit = False
-                for i in range(len(x1)):
-                    x_check = x1[i]
-                    y_check = y1[i]
-                    if foodx == x_check and foody == y_check:
-                        spawn_new_fruit = True
-                        break
-                if not spawn_new_fruit:
-                    check_fruit_spawn = False
-
-        # DRAWING GAME FRAME UPDATE
-        dis.fill(white)
-        text = score_font.render("Score: " + str(fruit_score - 2), True, black)
-        dis.blit(text, [0, 0])
-        for i in range(0, fruit_score + 1):  # drawing the new snake each frame.
-            if i == 0:
-                pygame.draw.rect(dis, blue, [x1[i], y1[i], snake_block_size, snake_block_size])
-            else:
-                pygame.draw.rect(dis, black, [x1[i], y1[i], snake_block_size, snake_block_size])
-
-        pygame.draw.rect(dis, red, [foodx, foody, snake_block_size, snake_block_size])  # drawing the food each frame.
-        pygame.display.update()
-
-        timeout += 1
-        clock.tick(300)
-
-    print("Score: " + str(fruit_score - 3))
-    return fruit_score - 3
+        snake_x, snake_y = funcs.snake_step(snake_x, snake_y, snake_x_step, snake_y_step)  # moving the snake pieces in sequence.
+        
+        snake_x, snake_y, food_x, food_y, score = funcs.food_collision(snake_x, snake_y, food_x, food_y, score)  # detecting food collision.
 
 
-def run_agent(num_games):
+        # UPDATING FRAME
+        funcs.frame_update(snake_x, snake_y, food_x, food_y, score)
+
+        pygame.display.update()  # refreshing the game display each frame.
+        config.clock.tick(1000)  # moving onto the next frame.
+        timeout += 1  # incrementing timeout counter.
+
+
+
+def run_batch(num_agents):
+    # runs a specified number of agents in a row.
     scores_cache = []
-    for i in range(num_games):
-        print(i)
-        sim = run_generation()
-        scores_cache.append(sim)
-    print(sum(scores_cache)/len(scores_cache))
+    for i in range(num_agents):
+        agent_score = run_agent()
+        scores_cache.append(agent_score)
+    print('Average Score: ' + str(sum(scores_cache)/len(scores_cache)))
 
 
-run_agent(100)
+run_batch(100)
